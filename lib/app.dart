@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'features/about/about_page.dart';
 import 'features/metronome/metronome_engine.dart';
 import 'features/metronome/metronome_page.dart';
 import 'features/tuner/pitch_engine.dart';
@@ -11,7 +12,7 @@ class GuitarToolsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '吉他工具',
+      title: '吉太工具箱',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -81,16 +82,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   Future<void> _onTabChanged(int i) async {
     if (i == _index) return;
-    if (i == 0) {
-      await _metro.stop();
-      if (!mounted) return;
-      setState(() => _index = i);
-      await _pitch.start();
-    } else {
-      await _pitch.stop();
-      if (!mounted) return;
-      setState(() => _index = i);
-    }
+    if (_index == 1) await _metro.stop();
+    if (_index == 0) await _pitch.stop();
+    if (!mounted) return;
+    setState(() => _index = i);
+    if (i == 0) await _pitch.start();
   }
 
   @override
@@ -101,6 +97,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         children: [
           TunerPage(engine: _pitch),
           MetronomePage(engine: _metro),
+          const AboutPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -116,6 +113,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             icon: Icon(Icons.timer_outlined),
             selectedIcon: Icon(Icons.timer),
             label: '节拍器',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.info_outline),
+            selectedIcon: Icon(Icons.info),
+            label: '关于',
           ),
         ],
       ),

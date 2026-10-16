@@ -3,6 +3,28 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
+/// Clicks per bar and which beats (0-based) are accented.
+class Meter {
+  const Meter(this.label, this.beats, this.accents);
+
+  final String label;
+  final int beats;
+  final List<int> accents;
+}
+
+const List<Meter> meters = [
+  Meter('2/4', 2, [0]),
+  Meter('3/4', 3, [0]),
+  Meter('4/4', 4, [0]),
+  Meter('5/4', 5, [0, 3]),
+  Meter('6/4', 6, [0]),
+  Meter('7/4', 7, [0, 4]),
+  Meter('3/8', 3, [0]),
+  Meter('6/8', 6, [0, 3]),
+  Meter('9/8', 9, [0, 3, 6]),
+  Meter('12/8', 12, [0, 3, 6, 9]),
+];
+
 /// Basic metronome with BPM, time signature, and accented first beat.
 class MetronomeEngine extends ChangeNotifier {
   MetronomeEngine();
@@ -18,8 +40,30 @@ class MetronomeEngine extends ChangeNotifier {
   int _bpm = 100;
   int get bpm => _bpm;
 
-  int _beatsPerBar = 4;
-  int get beatsPerBar => _beatsPerBar;
+  int _meterIndex = 2;
+  Meter get meter => meters[_meterIndex];
+  int get beatsPerBar => meter.beats;
+  String get meterLabel => meter.label;
+
+  List<bool>? _accentOverride;
+
+  bool isAccent(int oneBasedBeat) {
+    final index = oneBasedBeat - 1;
+    final custom = _accentOverride;
+    if (custom != null && index >= 0 && index < custom.length) {
+      return custom[index];
+    }
+    return meter.accents.contains(index);
+  }
+
+  void toggleAccent(int oneBasedBeat) {
+    final count = beatsPerBar;
+    if (oneBasedBeat < 1 || oneBasedBeat > count) return;
+    final next = List<bool>.generate(count, (i) => isAccent(i + 1));
+    next[oneBasedBeat - 1] = !next[oneBasedBeat - 1];
+    _accentOverride = next;
+    notifyListeners();
+  }
 
   bool _running = false;
   bool get running => _running;
@@ -96,9 +140,10 @@ class MetronomeEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setBeatsPerBar(int value) {
-    if (value != 2 && value != 3 && value != 4) return;
-    _beatsPerBar = value;
+  void setMeter(int index) {
+    if (index < 0 || index >= meters.length || index == _meterIndex) return;
+    _meterIndex = index;
+    _accentOverride = null;
     _beatIndex = 0;
     _currentBeat = 0;
     notifyListeners();
@@ -150,12 +195,12 @@ class MetronomeEngine extends ChangeNotifier {
     final interval = _intervalUs;
     while (now >= _nextBeatUs + interval) {
       _nextBeatUs += interval;
-      _beatIndex = (_beatIndex + 1) % _beatsPerBar;
+      _beatIndex = (_beatIndex + 1) % beatsPerBar;
     }
 
-    final isStrong = _beatIndex == 0;
+    final isStrong = isAccent(_beatIndex + 1);
     _currentBeat = _beatIndex + 1;
-    _beatIndex = (_beatIndex + 1) % _beatsPerBar;
+    _beatIndex = (_beatIndex + 1) % beatsPerBar;
     _nextBeatUs += interval;
 
     unawaited(_playClick(isStrong));
