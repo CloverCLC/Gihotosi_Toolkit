@@ -2,7 +2,15 @@
 
 给吉他用的调音器和节拍器，Android 应用。名字来自《轻音少女》里平泽唯那把吉他的外号「吉太」。
 
-当前版本 1.0.0。
+当前版本 **1.0.0**。
+
+## 下载安装
+
+到 [Releases](https://github.com/CloverCLC/Gihotosi_Toolkit/releases) 下载最新 APK，例如：
+
+[Gihotosi_Toolkit-1.0.0-arm64.apk](https://github.com/CloverCLC/Gihotosi_Toolkit/releases/download/v1.0.0/Gihotosi_Toolkit-1.0.0-arm64.apk)
+
+安装前在系统里允许「安装未知应用」。包只支持 **arm64-v8a**（现在主流安卓机）。首次使用调音器需要麦克风权限。
 
 ## 功能
 
@@ -31,15 +39,13 @@
 - 拍号：2/4、3/4、4/4、5/4、6/4、7/4、3/8、6/8、9/8、12/8。
 - 圆点实心是强拍，空心是弱拍。点一下可以改这一拍的强弱；换拍号后恢复该拍号的默认重音。
 
-## 环境
+## 从源码运行
+
+### 环境
 
 - Flutter 3.47 或与 `pubspec.yaml` 中 SDK 约束兼容的版本（Dart 3.13+）
 - Android SDK
 - 一台 **arm64-v8a** 的 Android 手机。工程只打这个 ABI，模拟器若是 x86_64 会装不上
-
-应用需要麦克风权限，用来测音。
-
-## 运行
 
 ```bash
 flutter pub get
@@ -58,7 +64,13 @@ flutter run -d <设备号>
 flutter build apk --debug
 ```
 
-产物在 `build/app/outputs/flutter-apk/app-debug.apk`。
+打正式包（需要本机已有 `android/key.properties` 和签名密钥）：
+
+```bash
+flutter build apk --release
+```
+
+产物在 `build/app/outputs/flutter-apk/`。
 
 部分机型（例如小米）需要在开发者选项里允许 USB 安装，否则会报 `INSTALL_FAILED_USER_RESTRICTED`。
 
@@ -71,6 +83,7 @@ lib/
   features/about/       关于
   core/music/           音高与标准调弦
 assets/sounds/          强弱拍点击声
+assets/icon/            应用图标源图
 ```
 
 ## 作者
