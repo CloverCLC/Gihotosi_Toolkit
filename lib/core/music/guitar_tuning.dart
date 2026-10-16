@@ -31,28 +31,19 @@ class GuitarTuning {
     GuitarString(number: 1, noteName: 'E4', midi: 64),
   ];
 
-  /// Guitar often rings at 2×/3× the fundamental. Prefer the octave that
-  /// sits closest to an open string.
-  static double preferFundamental(double hz) {
+  /// If [hz] is the 2nd or 3rd harmonic of [targetHz], return the fundamental.
+  /// Otherwise keep the measured pitch. Does not snap to other strings.
+  static double foldToward(double hz, double targetHz) {
     var best = hz;
-    var bestCents = _distanceToNearest(hz);
-    for (final divisor in [2.0, 3.0, 4.0]) {
+    var bestCents = Note.centsBetween(hz, targetHz).abs();
+    for (final divisor in [2.0, 3.0]) {
       final f = hz / divisor;
-      if (f < 70 || f > 420) continue;
-      final cents = _distanceToNearest(f);
-      if (cents + 12 < bestCents) {
+      if (f < 60) continue;
+      final cents = Note.centsBetween(f, targetHz).abs();
+      if (cents <= 30 && cents < bestCents) {
         best = f;
         bestCents = cents;
       }
-    }
-    return best;
-  }
-
-  static double _distanceToNearest(double hz) {
-    var best = double.infinity;
-    for (final s in standard) {
-      final abs = Note.centsBetween(hz, s.frequency).abs();
-      if (abs < best) best = abs;
     }
     return best;
   }

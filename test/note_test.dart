@@ -18,9 +18,10 @@ void main() {
     expect(Note.centsBetween(110, 110), closeTo(0, 0.01));
   });
 
-  test('second harmonic of low E folds back to E2', () {
-    final fundamental = GuitarTuning.preferFundamental(82.41 * 2);
-    expect(fundamental, closeTo(82.41, 0.2));
-    expect(GuitarTuning.nearest(fundamental).number, 6);
+  test('second harmonic folds only toward the locked string', () {
+    final e2 = GuitarTuning.byNumber(6).frequency;
+    expect(GuitarTuning.foldToward(e2 * 2, e2), closeTo(e2, 0.2));
+    final a3 = 220.0;
+    expect(GuitarTuning.foldToward(a3, e2), closeTo(a3, 0.01));
   });
 }

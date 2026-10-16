@@ -38,7 +38,7 @@ class PitchEngine extends ChangeNotifier {
   static const double _minRms = 0.004;
   static const double _inTuneCents = 5.0;
 
-  final AudioRecorder _recorder = AudioRecorder();
+  AudioRecorder _recorder = AudioRecorder();
   final PitchDetector _detector = PitchDetector(
     audioSampleRate: _analysisRate.toDouble(),
     bufferSize: _analysisSamples,
@@ -58,6 +58,7 @@ class PitchEngine extends ChangeNotifier {
 
   bool _running = false;
   bool get running => _running;
+  int _session = 0;
 
   bool _permissionDenied = false;
   bool get permissionDenied => _permissionDenied;
@@ -68,7 +69,8 @@ class PitchEngine extends ChangeNotifier {
   TunerReading? _reading;
   TunerReading? get reading => _reading;
 
-  final List<double> _recentHz = [];
+  double? _smoothHz;
+  int _octaveStreak = 0;
 
   void setLockedString(int? number) {
     _lockedStringNumber = number;
@@ -93,10 +95,14 @@ class PitchEngine extends ChangeNotifier {
 
   Future<void> start() async {
     if (_running) return;
+    final epoch = ++_session;
     if (!await ensurePermission()) return;
-    await _openStream();
+    if (epoch != _session) return;
     _running = true;
-    _recentHz.clear();
+    _smoothHz = null;
+    _octaveStreak = 0;
+    await _openStream(epoch);
+    if (epoch != _session || !_running) return;
     _tick?.cancel();
     _tick = Timer.periodic(const Duration(milliseconds: 50), (_) {
       unawaited(_onTick());
@@ -104,7 +110,7 @@ class PitchEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _openStream() async {
+  Future<void> _openStream(int epoch) async {
     final stream = await _recorder.startStream(
       const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
@@ -116,6 +122,10 @@ class PitchEngine extends ChangeNotifier {
         streamBufferSize: 2048,
       ),
     );
+    if (epoch != _session || !_running) {
+      await _releaseMic();
+      return;
+    }
     _write = 0;
     _filled = 0;
     _lastPcm = DateTime.now();
@@ -128,20 +138,31 @@ class PitchEngine extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _session++;
+    _running = false;
     _tick?.cancel();
     _tick = null;
     _silenceTimer?.cancel();
     await _subscription?.cancel();
     _subscription = null;
-    if (await _recorder.isRecording()) {
-      await _recorder.stop();
-    }
+    await _releaseMic();
     _filled = 0;
     _write = 0;
-    _recentHz.clear();
-    _running = false;
+    _smoothHz = null;
+    _octaveStreak = 0;
     _reading = null;
     notifyListeners();
+  }
+
+  Future<void> _releaseMic() async {
+    final recorder = _recorder;
+    _recorder = AudioRecorder();
+    try {
+      await recorder.cancel();
+    } catch (_) {}
+    try {
+      await recorder.dispose();
+    } catch (_) {}
   }
 
   void _appendPcm(Uint8List chunk) {
@@ -180,10 +201,9 @@ class PitchEngine extends ChangeNotifier {
     try {
       await _subscription?.cancel();
       _subscription = null;
-      if (await _recorder.isRecording()) {
-        await _recorder.stop();
-      }
-      await _openStream();
+      await _releaseMic();
+      if (!_running) return;
+      await _openStream(_session);
     } catch (e) {
       debugPrint('tuner stream restart failed: $e');
     } finally {
@@ -225,19 +245,19 @@ class PitchEngine extends ChangeNotifier {
 
     var hz = result.pitch;
     if (hz < 55 || hz > 1400) return;
-    hz = GuitarTuning.preferFundamental(hz);
-    if (hz < 70 || hz > 450) return;
 
-    if (_recentHz.isNotEmpty && (hz - _recentHz.last).abs() / _recentHz.last > 0.08) {
-      _recentHz.clear();
+    final locked = _lockedStringNumber == null
+        ? null
+        : GuitarTuning.byNumber(_lockedStringNumber!);
+    if (locked != null) {
+      hz = GuitarTuning.foldToward(hz, locked.frequency);
     }
-    _recentHz.add(hz);
-    if (_recentHz.length > 3) _recentHz.removeAt(0);
-    final stable = _median(_recentHz);
+    if (hz < 70 || hz > 500) return;
 
-    final string = _lockedStringNumber != null
-        ? GuitarTuning.byNumber(_lockedStringNumber!)
-        : GuitarTuning.nearest(stable);
+    final stable = _smooth(hz);
+    if (stable == null) return;
+
+    final string = locked ?? GuitarTuning.nearest(stable);
     final cents = Note.centsBetween(stable, string.frequency);
 
     _silenceTimer?.cancel();
@@ -256,7 +276,8 @@ class PitchEngine extends ChangeNotifier {
       _silenceTimer = null;
       if (_reading != null) {
         _reading = null;
-        _recentHz.clear();
+        _smoothHz = null;
+        _octaveStreak = 0;
         notifyListeners();
       }
     });
@@ -270,17 +291,31 @@ class PitchEngine extends ChangeNotifier {
     return math.sqrt(sum / samples.length);
   }
 
-  static double _median(List<double> values) {
-    final sorted = List<double>.from(values)..sort();
-    final mid = sorted.length ~/ 2;
-    if (sorted.length.isOdd) return sorted[mid];
-    return (sorted[mid - 1] + sorted[mid]) / 2;
+  /// Tracks the measured pitch. Single-frame octave flips are ignored so the
+  /// readout does not hop between a few fixed harmonics.
+  double? _smooth(double hz) {
+    final prev = _smoothHz;
+    if (prev == null) {
+      _smoothHz = hz;
+      return hz;
+    }
+    final ratio = hz / prev;
+    if (ratio > 1.4 || ratio < 1 / 1.4) {
+      _octaveStreak++;
+      if (_octaveStreak < 5) return prev;
+      _smoothHz = hz;
+      _octaveStreak = 0;
+      return hz;
+    }
+    _octaveStreak = 0;
+    final next = prev * 0.72 + hz * 0.28;
+    _smoothHz = next;
+    return next;
   }
 
   @override
   void dispose() {
     unawaited(stop());
-    _recorder.dispose();
     super.dispose();
   }
 }

@@ -72,21 +72,26 @@ class TunerPage extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                if (reading != null)
-                  Text(
-                    '${reading.cents >= 0 ? '+' : ''}${reading.cents.toStringAsFixed(0)} 音分',
+                SizedBox(
+                  height: 28,
+                  child: Text(
+                    reading == null
+                        ? ''
+                        : '${reading.cents >= 0 ? '+' : ''}${reading.cents.toStringAsFixed(0)} 音分',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
+                ),
                 const SizedBox(height: 4),
                 SizedBox(
-                  height: 168,
-                  child: TunerGauge(
+                  height: 210,
+                  child: TunerDisplay(
                     cents: reading?.cents ?? 0,
                     inTune: reading?.inTune ?? false,
                     hasSignal: reading != null,
+                    targetHz: selected?.frequency ?? reading?.string.frequency,
                   ),
                 ),
                 const Spacer(),

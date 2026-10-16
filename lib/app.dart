@@ -39,36 +39,58 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _index = 0;
   final PitchEngine _pitch = PitchEngine();
   final MetronomeEngine _metro = MetronomeEngine();
 
+  bool get _tunerVisible => _index == 0;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _metro.init();
-    // 打开应用即在调音页，默认开麦。
-    _pitch.start();
+    _syncMic();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pitch.dispose();
     _metro.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncMic();
+    } else {
+      _pitch.stop();
+    }
+  }
+
+  void _syncMic() {
+    if (_tunerVisible) {
+      _pitch.start();
+    } else {
+      _pitch.stop();
+    }
+  }
+
   Future<void> _onTabChanged(int i) async {
     if (i == _index) return;
-    // Mutual exclusion: stop the other feature when switching tabs.
     if (i == 0) {
       await _metro.stop();
+      if (!mounted) return;
+      setState(() => _index = i);
       await _pitch.start();
     } else {
       await _pitch.stop();
+      if (!mounted) return;
+      setState(() => _index = i);
     }
-    setState(() => _index = i);
   }
 
   @override
