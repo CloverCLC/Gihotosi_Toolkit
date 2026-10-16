@@ -99,9 +99,9 @@ class MetronomePage extends StatelessWidget {
                     Expanded(
                       child: Slider(
                         value: engine.bpm.toDouble(),
-                        min: 40,
-                        max: 208,
-                        divisions: 168,
+                        min: 20,
+                        max: 250,
+                        divisions: 230,
                         label: '${engine.bpm}',
                         onChanged: (v) => engine.setBpm(v.round()),
                       ),

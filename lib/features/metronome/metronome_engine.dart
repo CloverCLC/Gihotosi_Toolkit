@@ -10,9 +10,10 @@ class MetronomeEngine extends ChangeNotifier {
   static const _strongAsset = 'sounds/click_strong.wav';
   static const _weakAsset = 'sounds/click_weak.wav';
 
-  /// Rotate players so a beat never waits for the previous click to finish.
-  final List<AudioPlayer> _players = [];
-  int _playerIndex = 0;
+  final List<AudioPlayer> _strong = [];
+  final List<AudioPlayer> _weak = [];
+  int _strongIndex = 0;
+  int _weakIndex = 0;
 
   int _bpm = 100;
   int get bpm => _bpm;
@@ -40,13 +41,12 @@ class MetronomeEngine extends ChangeNotifier {
   String? get lastError => _lastError;
 
   static final AudioContext _audioContext = AudioContext(
-    // 强制外放 + 媒体音量，避免小米把声音路由到听筒（几乎听不见）
     android: const AudioContextAndroid(
       isSpeakerphoneOn: true,
       stayAwake: false,
       contentType: AndroidContentType.music,
       usageType: AndroidUsageType.media,
-      audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+      audioFocus: AndroidAudioFocus.gain,
     ),
     iOS: AudioContextIOS(
       category: AVAudioSessionCategory.playback,
@@ -58,16 +58,8 @@ class MetronomeEngine extends ChangeNotifier {
     if (_ready) return;
     try {
       await AudioPlayer.global.setAudioContext(_audioContext);
-
-      for (var i = 0; i < 4; i++) {
-        final p = AudioPlayer(playerId: 'metro_$i');
-        await p.setAudioContext(_audioContext);
-        // mediaPlayer 对 Asset WAV 更稳；lowLatency 在部分小米机上会没声
-        await p.setPlayerMode(PlayerMode.mediaPlayer);
-        await p.setReleaseMode(ReleaseMode.stop);
-        _players.add(p);
-      }
-
+      await _preparePool(_strong, _strongAsset, 1);
+      await _preparePool(_weak, _weakAsset, 0.8);
       _ready = true;
       _lastError = null;
       notifyListeners();
@@ -75,13 +67,30 @@ class MetronomeEngine extends ChangeNotifier {
       _lastError = e.toString();
       debugPrint('Metronome init failed: $e\n$st');
       notifyListeners();
-      rethrow;
+    }
+  }
+
+  Future<void> _preparePool(
+    List<AudioPlayer> pool,
+    String asset,
+    double volume,
+  ) async {
+    for (var i = 0; i < 6; i++) {
+      final player = AudioPlayer();
+      await player.setAudioContext(_audioContext);
+      // SoundPool：触发开销小且稳定。高速下 MediaPlayer 的 seek 延迟会忽长忽短。
+      await player.setPlayerMode(PlayerMode.lowLatency);
+      await player.setReleaseMode(ReleaseMode.stop);
+      await player.setVolume(volume);
+      await player.setSource(AssetSource(asset));
+      pool.add(player);
     }
   }
 
   void setBpm(int value) {
-    _bpm = value.clamp(40, 208);
+    _bpm = value.clamp(20, 250);
     if (_running) {
+      _nextBeatUs = _clock.elapsedMicroseconds + _intervalUs;
       _armTimer();
     }
     notifyListeners();
@@ -97,9 +106,8 @@ class MetronomeEngine extends ChangeNotifier {
 
   Future<void> start() async {
     if (_running) return;
-    if (!_ready) {
-      await init();
-    }
+    if (!_ready) await init();
+    if (!_ready) return;
     _running = true;
     _beatIndex = 0;
     _currentBeat = 0;
@@ -108,7 +116,8 @@ class MetronomeEngine extends ChangeNotifier {
       ..start();
     _nextBeatUs = 0;
     notifyListeners();
-    _onDeadline();
+    _onTick();
+    _armTimer();
   }
 
   Future<void> stop() async {
@@ -118,8 +127,8 @@ class MetronomeEngine extends ChangeNotifier {
     _running = false;
     _beatIndex = 0;
     _currentBeat = 0;
-    for (final p in _players) {
-      unawaited(p.stop());
+    for (final player in [..._strong, ..._weak]) {
+      unawaited(player.stop());
     }
     notifyListeners();
   }
@@ -129,48 +138,44 @@ class MetronomeEngine extends ChangeNotifier {
   void _armTimer() {
     _timer?.cancel();
     if (!_running) return;
-    final delayUs = _nextBeatUs - _clock.elapsedMicroseconds;
-    if (delayUs <= 0) {
-      scheduleMicrotask(_onDeadline);
-      return;
-    }
-    _timer = Timer(Duration(microseconds: delayUs), _onDeadline);
+    // 4ms 轮询比单次 Timer 在高 BPM 下更稳，触发误差被限制在几毫秒内。
+    _timer = Timer.periodic(const Duration(milliseconds: 4), (_) => _onTick());
   }
 
-  void _onDeadline() {
+  void _onTick() {
     if (!_running) return;
-
     final now = _clock.elapsedMicroseconds;
-    final interval = _intervalUs;
+    if (now < _nextBeatUs) return;
 
-    var skipped = 0;
-    while (_nextBeatUs + interval <= now) {
+    final interval = _intervalUs;
+    while (now >= _nextBeatUs + interval) {
       _nextBeatUs += interval;
       _beatIndex = (_beatIndex + 1) % _beatsPerBar;
-      skipped++;
-      if (skipped > 8) break;
     }
 
     final isStrong = _beatIndex == 0;
     _currentBeat = _beatIndex + 1;
     _beatIndex = (_beatIndex + 1) % _beatsPerBar;
     _nextBeatUs += interval;
-    _tick++;
-    notifyListeners();
 
     unawaited(_playClick(isStrong));
-    _armTimer();
+    _tick++;
+    notifyListeners();
   }
 
   Future<void> _playClick(bool strong) async {
-    if (_players.isEmpty) return;
-    final player = _players[_playerIndex % _players.length];
-    _playerIndex++;
-    final asset = strong ? _strongAsset : _weakAsset;
-    final volume = strong ? 1.0 : 0.8;
+    final pool = strong ? _strong : _weak;
+    if (pool.isEmpty) return;
+    final index = strong ? _strongIndex++ : _weakIndex++;
+    final player = pool[index % pool.length];
     try {
+      // lowLatency 不支持任意 seek。stop 清掉上一次播放，resume 立刻重触发。
       await player.stop();
-      await player.play(AssetSource(asset), volume: volume, ctx: _audioContext);
+      await player.resume();
+      if (_lastError != null) {
+        _lastError = null;
+        notifyListeners();
+      }
     } catch (e) {
       _lastError = e.toString();
       debugPrint('Metronome click failed: $e');
@@ -181,10 +186,11 @@ class MetronomeEngine extends ChangeNotifier {
   @override
   void dispose() {
     _timer?.cancel();
-    for (final p in _players) {
-      p.dispose();
+    for (final player in [..._strong, ..._weak]) {
+      player.dispose();
     }
-    _players.clear();
+    _strong.clear();
+    _weak.clear();
     super.dispose();
   }
 }
